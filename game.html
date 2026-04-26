@@ -1,0 +1,715 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>NEON RUNNER</title>
+    <style>
+      @import url("https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Share+Tech+Mono&display=swap");
+
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      body {
+        background: #000;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        height: 100vh;
+        overflow: hidden;
+        font-family: "Orbitron", monospace;
+        user-select: none;
+      }
+
+      #ui {
+        position: absolute;
+        top: 20px;
+        left: 0;
+        right: 0;
+        display: flex;
+        justify-content: space-between;
+        padding: 0 30px;
+        z-index: 10;
+        pointer-events: none;
+      }
+
+      .stat {
+        font-family: "Share Tech Mono", monospace;
+        font-size: 13px;
+        color: #0ff;
+        text-shadow: 0 0 8px #0ff, 0 0 20px #0ff;
+        letter-spacing: 2px;
+      }
+
+      .stat span {
+        font-family: "Orbitron", monospace;
+        font-size: 20px;
+        font-weight: 700;
+        display: block;
+        color: #fff;
+        text-shadow: 0 0 10px #0ff, 0 0 30px #0ff;
+      }
+
+      canvas {
+        display: block;
+        cursor: none;
+      }
+
+      #overlay {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        background: rgba(0, 0, 0, 0.85);
+        z-index: 20;
+        pointer-events: none;
+      }
+
+      #overlay.hidden {
+        display: none;
+      }
+
+      .title-text {
+        font-size: clamp(36px, 8vw, 72px);
+        font-weight: 900;
+        letter-spacing: 8px;
+        color: #fff;
+        text-shadow: 0 0 20px #0ff, 0 0 60px #0ff, 0 0 100px #0a0aff;
+        animation: pulse 2s ease-in-out infinite;
+        margin-bottom: 8px;
+      }
+
+      .sub-text {
+        font-family: "Share Tech Mono", monospace;
+        font-size: clamp(11px, 2vw, 14px);
+        color: #0ff;
+        letter-spacing: 4px;
+        opacity: 0.7;
+        margin-bottom: 40px;
+      }
+
+      .start-btn {
+        font-family: "Orbitron", monospace;
+        font-size: 16px;
+        font-weight: 700;
+        letter-spacing: 4px;
+        color: #000;
+        background: #0ff;
+        border: none;
+        padding: 14px 40px;
+        cursor: pointer;
+        pointer-events: all;
+        clip-path: polygon(8px 0%, 100% 0%, calc(100% - 8px) 100%, 0% 100%);
+        box-shadow: 0 0 30px #0ff, 0 0 60px #0ff;
+        transition: all 0.2s;
+        text-transform: uppercase;
+      }
+
+      .start-btn:hover {
+        background: #fff;
+        box-shadow: 0 0 50px #0ff, 0 0 100px #0ff;
+        transform: scale(1.05);
+      }
+
+      .hint-text {
+        font-family: "Share Tech Mono", monospace;
+        font-size: 12px;
+        color: #0ff;
+        letter-spacing: 2px;
+        opacity: 0.5;
+        margin-top: 20px;
+      }
+
+      .score-final {
+        font-size: clamp(14px, 3vw, 18px);
+        color: #ff0080;
+        text-shadow: 0 0 10px #ff0080;
+        letter-spacing: 3px;
+        margin-bottom: 30px;
+        font-family: "Share Tech Mono", monospace;
+      }
+
+      @keyframes pulse {
+        0%,
+        100% {
+          opacity: 1;
+        }
+        50% {
+          opacity: 0.8;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="ui">
+      <div class="stat">SCORE<span id="scoreDisplay">0</span></div>
+      <div class="stat" style="text-align: center">
+        SPEED<span id="speedDisplay">1.0x</span>
+      </div>
+      <div class="stat" style="text-align: right">
+        BEST<span id="bestDisplay">0</span>
+      </div>
+    </div>
+
+    <canvas id="c"></canvas>
+
+    <div id="overlay">
+      <div class="title-text">NEON RUNNER</div>
+      <div class="sub-text">CYBERPUNK SURVIVAL</div>
+      <div class="score-final" id="scoreFinal" style="display: none"></div>
+      <button class="start-btn" id="startBtn">JACK IN</button>
+      <div class="hint-text">
+        SPACE / CLICK / TAP TO JUMP &nbsp;·&nbsp; DOUBLE JUMP UNLOCKED
+      </div>
+    </div>
+
+    <script>
+      const canvas = document.getElementById("c");
+      const ctx = canvas.getContext("2d");
+      const overlay = document.getElementById("overlay");
+      const startBtn = document.getElementById("startBtn");
+      const scoreFinal = document.getElementById("scoreFinal");
+      const scoreDisplay = document.getElementById("scoreDisplay");
+      const speedDisplay = document.getElementById("speedDisplay");
+      const bestDisplay = document.getElementById("bestDisplay");
+
+      let W, H, groundY;
+      function resize() {
+        W = canvas.width = window.innerWidth;
+        H = canvas.height = window.innerHeight;
+        groundY = H * 0.75;
+      }
+      resize();
+      window.addEventListener("resize", resize);
+
+      // ─── State ───────────────────────────────────────────────────────────────────
+      let state = "menu"; // menu | playing | dead
+      let score = 0,
+        best = 0,
+        frame = 0,
+        speed = 1;
+      let shakeTimer = 0,
+        shakeX = 0,
+        shakeY = 0;
+
+      // ─── Player ──────────────────────────────────────────────────────────────────
+      const P = {
+        x: 0,
+        y: 0,
+        vy: 0,
+        w: 32,
+        h: 48,
+        jumps: 0,
+        maxJumps: 2,
+        trail: [],
+        reset() {
+          this.x = W * 0.18;
+          this.y = groundY - this.h;
+          this.vy = 0;
+          this.jumps = 0;
+          this.trail = [];
+        },
+        jump() {
+          if (this.jumps < this.maxJumps) {
+            this.vy = -18;
+            this.jumps++;
+            spawnJumpParticles(this.x + this.w / 2, this.y + this.h);
+          }
+        },
+        update() {
+          this.vy += 0.7;
+          this.y += this.vy;
+          if (this.y >= groundY - this.h) {
+            this.y = groundY - this.h;
+            this.vy = 0;
+            this.jumps = 0;
+          }
+          this.trail.unshift({
+            x: this.x + this.w / 2,
+            y: this.y + this.h / 2,
+            age: 0,
+          });
+          if (this.trail.length > 14) this.trail.pop();
+          this.trail.forEach((t) => t.age++);
+        },
+        draw() {
+          // Trail
+          this.trail.forEach((t, i) => {
+            const a = 1 - t.age / 14;
+            ctx.save();
+            ctx.globalAlpha = a * 0.5;
+            ctx.shadowBlur = 10;
+            ctx.shadowColor = "#ff0080";
+            ctx.fillStyle = "#ff0080";
+            const s = this.w * 0.6 * (1 - i / 14);
+            ctx.fillRect(t.x - s / 2, t.y - s / 2, s, s);
+            ctx.restore();
+          });
+          // Body
+          ctx.save();
+          ctx.shadowBlur = 20;
+          ctx.shadowColor = "#0ff";
+          // Main body
+          ctx.fillStyle = "#0a0a1a";
+          ctx.fillRect(this.x, this.y, this.w, this.h);
+          // Neon outline
+          ctx.strokeStyle = "#0ff";
+          ctx.lineWidth = 2;
+          ctx.strokeRect(this.x + 1, this.y + 1, this.w - 2, this.h - 2);
+          // Visor
+          ctx.fillStyle = "#0ff";
+          ctx.globalAlpha = 0.9;
+          ctx.fillRect(this.x + 4, this.y + 10, this.w - 8, 10);
+          // Body lines
+          ctx.globalAlpha = 0.4;
+          ctx.strokeStyle = "#ff0080";
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(this.x + 8, this.y + 28);
+          ctx.lineTo(this.x + this.w - 8, this.y + 28);
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.moveTo(this.x + 6, this.y + 36);
+          ctx.lineTo(this.x + this.w - 6, this.y + 36);
+          ctx.stroke();
+          ctx.restore();
+        },
+      };
+
+      // ─── Obstacles ───────────────────────────────────────────────────────────────
+      let obstacles = [];
+      let obsCooldown = 0;
+
+      function spawnObs() {
+        const types = ["low", "high", "double"];
+        const t = types[Math.floor(Math.random() * (speed > 2 ? 3 : 2))];
+        if (t === "low") {
+          const h = 30 + Math.random() * 50;
+          obstacles.push({
+            x: W + 20,
+            y: groundY - h,
+            w: 24 + Math.random() * 16,
+            h,
+            type: "low",
+          });
+        } else if (t === "high") {
+          const h = 20 + Math.random() * 20;
+          const fromGround = 120 + Math.random() * 80;
+          obstacles.push({
+            x: W + 20,
+            y: groundY - fromGround - h,
+            w: 20 + Math.random() * 12,
+            h,
+            type: "high",
+          });
+        } else {
+          const h1 = 30 + Math.random() * 40;
+          obstacles.push({
+            x: W + 20,
+            y: groundY - h1,
+            w: 22,
+            h: h1,
+            type: "low",
+          });
+          const h2 = 20 + Math.random() * 20;
+          obstacles.push({
+            x: W + 60,
+            y: groundY - 130 - h2,
+            w: 22,
+            h: h2,
+            type: "high",
+          });
+        }
+      }
+
+      function drawObs(o) {
+        ctx.save();
+        const col = o.type === "high" ? "#ff0080" : "#ff6600";
+        ctx.shadowBlur = 18;
+        ctx.shadowColor = col;
+        ctx.fillStyle = "#0a0010";
+        ctx.fillRect(o.x, o.y, o.w, o.h);
+        ctx.strokeStyle = col;
+        ctx.lineWidth = 2;
+        ctx.strokeRect(o.x + 1, o.y + 1, o.w - 2, o.h - 2);
+        // Scanline
+        ctx.globalAlpha = 0.3;
+        ctx.fillStyle = col;
+        for (let yy = o.y + 4; yy < o.y + o.h; yy += 8) {
+          ctx.fillRect(o.x + 2, yy, o.w - 4, 2);
+        }
+        ctx.restore();
+      }
+
+      // ─── Particles ───────────────────────────────────────────────────────────────
+      let particles = [];
+
+      function spawnJumpParticles(x, y) {
+        for (let i = 0; i < 10; i++) {
+          particles.push({
+            x,
+            y,
+            vx: (Math.random() - 0.5) * 5,
+            vy: Math.random() * -4,
+            life: 1,
+            decay: 0.06 + Math.random() * 0.04,
+            col: Math.random() > 0.5 ? "#0ff" : "#ff0080",
+            size: 2 + Math.random() * 4,
+          });
+        }
+      }
+
+      function spawnDeathParticles(x, y) {
+        for (let i = 0; i < 40; i++) {
+          const angle = Math.random() * Math.PI * 2;
+          const spd = 2 + Math.random() * 8;
+          particles.push({
+            x,
+            y,
+            vx: Math.cos(angle) * spd,
+            vy: Math.sin(angle) * spd,
+            life: 1,
+            decay: 0.02 + Math.random() * 0.03,
+            col: ["#0ff", "#ff0080", "#ff6600", "#fff"][
+              Math.floor(Math.random() * 4)
+            ],
+            size: 2 + Math.random() * 6,
+          });
+        }
+      }
+
+      function updateParticles() {
+        particles = particles.filter((p) => p.life > 0);
+        particles.forEach((p) => {
+          p.x += p.vx;
+          p.y += p.vy;
+          p.vy += 0.15;
+          p.life -= p.decay;
+        });
+      }
+
+      function drawParticles() {
+        particles.forEach((p) => {
+          ctx.save();
+          ctx.globalAlpha = p.life;
+          ctx.shadowBlur = 12;
+          ctx.shadowColor = p.col;
+          ctx.fillStyle = p.col;
+          ctx.fillRect(p.x - p.size / 2, p.y - p.size / 2, p.size, p.size);
+          ctx.restore();
+        });
+      }
+
+      // ─── Background ──────────────────────────────────────────────────────────────
+      let bgStars = [];
+      let bgLines = [];
+      let bgOffset = 0;
+
+      function initBg() {
+        bgStars = [];
+        for (let i = 0; i < 120; i++) {
+          bgStars.push({
+            x: Math.random(),
+            y: Math.random() * 0.7,
+            s: Math.random() * 2 + 0.5,
+            twinkle: Math.random(),
+          });
+        }
+        bgLines = [];
+        for (let i = 0; i < 8; i++) {
+          bgLines.push({
+            y: groundY + Math.random() * H * 0.2,
+            speed: 0.5 + Math.random() * 1.5,
+            x: Math.random() * W,
+          });
+        }
+      }
+      initBg();
+
+      function drawBg() {
+        // Sky gradient
+        const sky = ctx.createLinearGradient(0, 0, 0, groundY);
+        sky.addColorStop(0, "#000005");
+        sky.addColorStop(0.6, "#050010");
+        sky.addColorStop(1, "#0a0020");
+        ctx.fillStyle = sky;
+        ctx.fillRect(0, 0, W, groundY);
+
+        // Stars
+        bgStars.forEach((s) => {
+          const flicker = 0.6 + 0.4 * Math.sin(frame * 0.05 + s.twinkle * 10);
+          ctx.save();
+          ctx.globalAlpha = flicker;
+          ctx.fillStyle = Math.random() > 0.97 ? "#0ff" : "#fff";
+          ctx.fillRect(s.x * W, s.y * groundY, s.s, s.s);
+          ctx.restore();
+        });
+
+        // City silhouette
+        ctx.fillStyle = "#05001a";
+        const buildings = [
+          [0.0, 0.55, 0.06, 0.2],
+          [0.05, 0.5, 0.04, 0.25],
+          [0.08, 0.58, 0.05, 0.17],
+          [0.12, 0.45, 0.07, 0.3],
+          [0.18, 0.6, 0.04, 0.15],
+          [0.21, 0.48, 0.06, 0.27],
+          [0.26, 0.52, 0.05, 0.23],
+          [0.3, 0.42, 0.08, 0.33],
+          [0.37, 0.55, 0.04, 0.2],
+          [0.4, 0.47, 0.07, 0.28],
+          [0.46, 0.58, 0.03, 0.17],
+          [0.48, 0.43, 0.09, 0.32],
+          [0.56, 0.5, 0.05, 0.25],
+          [0.6, 0.38, 0.1, 0.37],
+          [0.69, 0.52, 0.04, 0.23],
+          [0.72, 0.46, 0.07, 0.29],
+          [0.78, 0.55, 0.05, 0.2],
+          [0.82, 0.4, 0.09, 0.35],
+          [0.9, 0.5, 0.06, 0.25],
+          [0.95, 0.56, 0.05, 0.19],
+        ];
+        buildings.forEach(([bx, by, bw, bh]) => {
+          ctx.fillRect(bx * W, by * groundY, bw * W, bh * groundY);
+        });
+
+        // Neon windows on buildings
+        ctx.save();
+        buildings.forEach(([bx, by, bw]) => {
+          const cols = ["#0ff", "#ff0080", "#ff6600", "#9900ff"];
+          for (let wy = by * groundY + 6; wy < groundY - 6; wy += 12) {
+            for (let wx = bx * W + 4; wx < (bx + bw) * W - 4; wx += 10) {
+              if (Math.sin(wx * 3.7 + wy * 2.1 + frame * 0.01) > 0.4) {
+                ctx.fillStyle =
+                  cols[Math.floor((wx + wy) * 0.13) % cols.length];
+                ctx.globalAlpha = 0.6 + 0.4 * Math.sin(frame * 0.03 + wx);
+                ctx.shadowBlur = 4;
+                ctx.shadowColor = ctx.fillStyle;
+                ctx.fillRect(wx, wy, 4, 5);
+              }
+            }
+          }
+        });
+        ctx.restore();
+
+        // Ground
+        const grd = ctx.createLinearGradient(0, groundY, 0, H);
+        grd.addColorStop(0, "#0a0030");
+        grd.addColorStop(1, "#000010");
+        ctx.fillStyle = grd;
+        ctx.fillRect(0, groundY, W, H - groundY);
+
+        // Ground grid lines (perspective)
+        bgOffset = (bgOffset + speed * 3) % 80;
+        ctx.save();
+        ctx.strokeStyle = "#ff0080";
+        ctx.lineWidth = 0.5;
+        ctx.globalAlpha = 0.25;
+        // Horizontal lines
+        for (let yy = groundY; yy < H; yy += 18) {
+          ctx.beginPath();
+          ctx.moveTo(0, yy);
+          ctx.lineTo(W, yy);
+          ctx.stroke();
+        }
+        // Vertical perspective lines
+        for (let xx = -bgOffset; xx < W + 80; xx += 80) {
+          ctx.beginPath();
+          ctx.moveTo(W / 2 + (xx - W / 2) * 0.3, groundY);
+          ctx.lineTo(xx, H);
+          ctx.stroke();
+        }
+        ctx.restore();
+
+        // Ground glow line
+        ctx.save();
+        ctx.shadowBlur = 20;
+        ctx.shadowColor = "#0ff";
+        ctx.strokeStyle = "#0ff";
+        ctx.lineWidth = 2;
+        ctx.globalAlpha = 0.8;
+        ctx.beginPath();
+        ctx.moveTo(0, groundY);
+        ctx.lineTo(W, groundY);
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      // ─── Mouse cursor ────────────────────────────────────────────────────────────
+      let mx = W / 2,
+        my = H / 2;
+      canvas.addEventListener("mousemove", (e) => {
+        mx = e.clientX;
+        my = e.clientY;
+      });
+
+      function drawCursor() {
+        ctx.save();
+        ctx.strokeStyle = "#0ff";
+        ctx.lineWidth = 1.5;
+        ctx.shadowBlur = 12;
+        ctx.shadowColor = "#0ff";
+        const r = 10;
+        ctx.beginPath();
+        ctx.arc(mx, my, r, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(mx - r - 5, my);
+        ctx.lineTo(mx - r + 3, my);
+        ctx.moveTo(mx + r - 3, my);
+        ctx.lineTo(mx + r + 5, my);
+        ctx.moveTo(mx, my - r - 5);
+        ctx.lineTo(mx, my - r + 3);
+        ctx.moveTo(mx, my + r - 3);
+        ctx.lineTo(mx, my + r + 5);
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      // ─── Collision ───────────────────────────────────────────────────────────────
+      function collides(a, b) {
+        const pad = 6;
+        return (
+          a.x + pad < b.x + b.w &&
+          a.x + a.w - pad > b.x &&
+          a.y + pad < b.y + b.h &&
+          a.y + a.h - pad > b.y
+        );
+      }
+
+      // ─── HUD scanline overlay ─────────────────────────────────────────────────────
+      function drawScanlines() {
+        ctx.save();
+        ctx.globalAlpha = 0.04;
+        ctx.fillStyle = "#000";
+        for (let yy = 0; yy < H; yy += 4) {
+          ctx.fillRect(0, yy, W, 2);
+        }
+        ctx.restore();
+      }
+
+      // ─── Game loop ───────────────────────────────────────────────────────────────
+      function startGame() {
+        state = "playing";
+        score = 0;
+        frame = 0;
+        speed = 1;
+        obstacles = [];
+        particles = [];
+        obsCooldown = 80;
+        P.reset();
+        overlay.classList.add("hidden");
+      }
+
+      function die() {
+        state = "dead";
+        if (score > best) best = score;
+        bestDisplay.textContent = best;
+        spawnDeathParticles(P.x + P.w / 2, P.y + P.h / 2);
+        shakeTimer = 30;
+        setTimeout(() => {
+          overlay.classList.remove("hidden");
+          scoreFinal.style.display = "block";
+          scoreFinal.textContent = `LAST RUN: ${score} // BEST: ${best}`;
+          startBtn.textContent = "RUN AGAIN";
+        }, 800);
+      }
+
+      function loop() {
+        requestAnimationFrame(loop);
+        frame++;
+
+        // Screen shake
+        if (shakeTimer > 0) {
+          shakeTimer--;
+          shakeX = (Math.random() - 0.5) * 10 * (shakeTimer / 30);
+          shakeY = (Math.random() - 0.5) * 6 * (shakeTimer / 30);
+        } else {
+          shakeX = 0;
+          shakeY = 0;
+        }
+
+        ctx.save();
+        ctx.translate(shakeX, shakeY);
+
+        drawBg();
+
+        if (state === "playing") {
+          frame++;
+          score++;
+          speed = 1 + score / 600;
+          scoreDisplay.textContent = score;
+          speedDisplay.textContent = speed.toFixed(1) + "x";
+
+          obsCooldown--;
+          if (obsCooldown <= 0) {
+            spawnObs();
+            obsCooldown = Math.max(40, 90 - speed * 12) + Math.random() * 30;
+          }
+
+          obstacles.forEach((o) => (o.x -= speed * 5));
+          obstacles = obstacles.filter((o) => o.x + o.w > -50);
+
+          P.update();
+
+          for (let o of obstacles) {
+            if (collides(P, o)) {
+              die();
+              break;
+            }
+          }
+
+          updateParticles();
+          obstacles.forEach(drawObs);
+          drawParticles();
+          P.draw();
+        } else {
+          updateParticles();
+          drawParticles();
+          P.draw();
+        }
+
+        drawScanlines();
+        drawCursor();
+        ctx.restore();
+      }
+
+      // ─── Input ───────────────────────────────────────────────────────────────────
+      function handleJump() {
+        if (state === "playing") P.jump();
+      }
+
+      document.addEventListener("keydown", (e) => {
+        if (e.code === "Space" || e.code === "ArrowUp" || e.code === "KeyW") {
+          e.preventDefault();
+          handleJump();
+        }
+      });
+
+      canvas.addEventListener("click", () => {
+        if (state === "playing") handleJump();
+      });
+
+      canvas.addEventListener(
+        "touchstart",
+        (e) => {
+          e.preventDefault();
+          if (state === "playing") handleJump();
+        },
+        { passive: false }
+      );
+
+      startBtn.addEventListener("click", startGame);
+
+      // Initial state - show player on screen
+      P.reset();
+      loop();
+    </script>
+  </body>
+</html>
